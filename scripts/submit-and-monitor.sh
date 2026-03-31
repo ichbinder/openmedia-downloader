@@ -13,6 +13,11 @@ echo "[openmedia] Job: ${JOB_ID}"
 echo "[openmedia] Hash: ${JOB_HASH:0:16}..."
 echo "[openmedia] ============================================="
 
+# Warn if API_BASE_URL is not HTTPS (acceptable for local dev, dangerous in production)
+if [[ "${API_BASE_URL}" != https://* ]] && [[ "${API_BASE_URL}" != *"localhost"* ]] && [[ "${API_BASE_URL}" != *"host.docker.internal"* ]]; then
+  echo "[openmedia] ⚠️  WARNING: API_BASE_URL is not HTTPS — secrets may be transmitted in plaintext!"
+fi
+
 # ── Signal "downloading" to API ─────────────────────────────────
 echo "[openmedia] Signaling status: downloading"
 curl -sf -X PATCH "${API_BASE_URL}/downloads/jobs/${JOB_ID}/status" \

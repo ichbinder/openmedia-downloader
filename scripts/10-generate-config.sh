@@ -62,6 +62,7 @@ mkdir -p /downloads/complete /downloads/watched /incomplete-downloads /downloads
 chown -R abc:abc /downloads /incomplete-downloads
 
 # Write env file for post-process.sh (SABnzbd may not pass parent env to scripts)
+# File is deleted after post-process.sh reads it
 cat > /opt/openmedia/.env << EOF
 OPENMEDIA_JOB_ID=${JOB_ID}
 OPENMEDIA_JOB_HASH=${JOB_HASH}
