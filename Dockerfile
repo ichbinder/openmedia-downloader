@@ -5,22 +5,22 @@ RUN apk add --no-cache \
     aws-cli \
     curl \
     bash \
-    coreutils
+    coreutils \
+    xxd
 
-# Copy our scripts
-COPY scripts/ /opt/openmedia/scripts/
-RUN chmod +x /opt/openmedia/scripts/*.sh
+# Custom init script: generates sabnzbd.ini before SABnzbd starts
+# Runs during s6 Stage 2 (cont-init.d), before services start
+COPY scripts/10-generate-config.sh /etc/cont-init.d/10-generate-config
+RUN chmod +x /etc/cont-init.d/10-generate-config
 
-# Copy SABnzbd config template
-COPY templates/sabnzbd.ini.template /opt/openmedia/templates/sabnzbd.ini.template
-
-# Custom entrypoint wraps the linuxserver init
-COPY scripts/entrypoint.sh /opt/openmedia/entrypoint.sh
-RUN chmod +x /opt/openmedia/entrypoint.sh
-
-# Post-processing script goes where SABnzbd expects it
+# Post-processing script: called by SABnzbd after download completes
 RUN mkdir -p /config/scripts
 COPY scripts/post-process.sh /config/scripts/post-process.sh
 RUN chmod +x /config/scripts/post-process.sh
 
-ENTRYPOINT ["/opt/openmedia/entrypoint.sh"]
+# SABnzbd config template
+COPY templates/sabnzbd.ini.template /opt/openmedia/templates/sabnzbd.ini.template
+
+# NZB submission + monitoring script (runs as CMD after SABnzbd is up)
+COPY scripts/submit-and-monitor.sh /opt/openmedia/submit-and-monitor.sh
+RUN chmod +x /opt/openmedia/submit-and-monitor.sh

@@ -41,12 +41,17 @@ bandwidth_limit = 0
 bandwidth_perc = 100
 cache_limit = 256M
 cleanup_list =
+inet_exposure = 4
+permissions = 777
+helpful_warnings = 0
+wizard_completed = 1
 
 [logging]
 log_level = 1
 max_log_size = 5242880
 log_backups = 1
 
+[servers]
 [[__USENET_HOST__]]
 host = __USENET_HOST__
 port = __USENET_PORT__
