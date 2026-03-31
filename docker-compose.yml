@@ -1,0 +1,20 @@
+services:
+  downloader:
+    build: .
+    container_name: openmedia-downloader
+    env_file: .env
+    ports:
+      - "8080:8080"   # SABnzbd Web UI (für Debugging)
+    volumes:
+      - downloads:/downloads
+      - config:/config
+    healthcheck:
+      test: ["CMD", "/opt/openmedia/scripts/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  downloads:
+  config:

@@ -1,0 +1,25 @@
+reviewers:
+  - auto
+reviews:
+  profile: "chill"
+  path_instructions:
+    - path: "scripts/**"
+      instructions: |
+        Review bash scripts for:
+        - Security: no secret leaks in logs, proper quoting
+        - Error handling: set -euo pipefail, proper exit codes
+        - Robustness: handle missing files, empty responses
+    - path: "Dockerfile"
+      instructions: |
+        Check for:
+        - Minimal image size
+        - No hardcoded secrets
+        - Proper permissions on scripts
+    - path: "templates/**"
+      instructions: |
+        Check for:
+        - No hardcoded credentials
+        - Proper placeholder naming
+        - SABnzbd config correctness
+chat:
+  auto_reply: true
