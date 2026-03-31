@@ -63,6 +63,7 @@ chown -R abc:abc /downloads /incomplete-downloads
 
 # Write env file for post-process.sh (SABnzbd may not pass parent env to scripts)
 # File is deleted after post-process.sh reads it
+# Must be readable by abc user (UID 911) since SABnzbd runs scripts as abc
 cat > /opt/openmedia/.env << EOF
 OPENMEDIA_JOB_ID=${JOB_ID}
 OPENMEDIA_JOB_HASH=${JOB_HASH}
@@ -74,6 +75,7 @@ OPENMEDIA_S3_REGION=${S3_REGION}
 AWS_ACCESS_KEY_ID=${S3_ACCESS_KEY}
 AWS_SECRET_ACCESS_KEY=${S3_SECRET_KEY}
 EOF
+chown abc:abc /opt/openmedia/.env
 chmod 600 /opt/openmedia/.env
 
 echo "[openmedia] Configuration complete, SABnzbd will start next"
