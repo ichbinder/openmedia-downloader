@@ -40,7 +40,8 @@ echo "[openmedia] SABnzbd is ready (waited ${WAITED}s)"
 
 # ── Download NZB file from API ──────────────────────────────────
 echo "[openmedia] Downloading NZB file..."
-NZB_FILE="/downloads/watched/${JOB_HASH}.nzb"
+mkdir -p /downloads/staging
+NZB_FILE="/downloads/staging/${JOB_HASH}.nzb"
 
 HTTP_STATUS=$(curl -sf -w "%{http_code}" \
   -H "Authorization: Bearer ${SERVICE_TOKEN}" \
