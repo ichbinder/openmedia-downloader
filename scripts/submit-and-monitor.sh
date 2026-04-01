@@ -133,7 +133,7 @@ while [ $ELAPSED -lt $MAX_RUNTIME ]; do
         curl -sf -X PATCH "${API_BASE_URL}/downloads/jobs/${JOB_ID}/status" \
           -H "Authorization: Bearer ${SERVICE_TOKEN}" \
           -H "Content-Type: application/json" \
-          -d "{\"progress\":${MAPPED_PROGRESS}}" || true
+          -d "{\"status\":\"downloading\",\"progress\":${MAPPED_PROGRESS}}" || true
       fi
     fi
   fi
