@@ -5,7 +5,12 @@
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
-SABNZBD_API_KEY=$(cat /opt/openmedia/sabnzbd-api-key)
+# disable_api_key=1 in sabnzbd.ini means no key needed.
+# Using the generated key would fail after SABnzbd rotates it internally.
+SABNZBD_API_KEY=""
+if [ -f /opt/openmedia/sabnzbd-api-key ]; then
+  SABNZBD_API_KEY=$(cat /opt/openmedia/sabnzbd-api-key)
+fi
 
 echo "[openmedia] ============================================="
 echo "[openmedia] Submit & Monitor starting"
@@ -101,14 +106,27 @@ while [ $ELAPSED -lt $MAX_RUNTIME ]; do
 
   HISTORY_JSON=$(curl -sf "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=history&output=json" 2>/dev/null || echo "")
 
+  # Check if post-process already signaled completion (faster than polling SABnzbd)
+  if [ -f /tmp/openmedia-upload-done ]; then
+    echo "[openmedia] Post-process signaled completion (upload done file found)"
+    break
+  fi
+
   if echo "${HISTORY_JSON}" | grep -q "${JOB_HASH}"; then
     JOB_STATUS=$(echo "${HISTORY_JSON}" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
 
     if [ "${JOB_STATUS}" = "Completed" ]; then
-      echo "[openmedia] SABnzbd reports: Completed! Post-processing will handle the rest."
-      # post-process.sh handles S3 upload + API callback
-      # Wait for it to finish
-      sleep 30
+      echo "[openmedia] SABnzbd reports: Completed! Waiting for post-process..."
+      # Wait for post-process to finish S3 upload + API callback
+      PP_WAIT=0
+      while [ $PP_WAIT -lt 600 ]; do
+        if [ -f /tmp/openmedia-upload-done ]; then
+          echo "[openmedia] Post-process finished (waited ${PP_WAIT}s)"
+          break
+        fi
+        sleep 5
+        PP_WAIT=$((PP_WAIT + 5))
+      done
       break
     elif [ "${JOB_STATUS}" = "Failed" ]; then
       FAIL_MSG=$(echo "${HISTORY_JSON}" | grep -o '"fail_message":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -154,4 +172,17 @@ FINAL_STATUS=$(curl -sf \
   "${API_BASE_URL}/downloads/jobs/${JOB_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
 
 echo "[openmedia] Final status: ${FINAL_STATUS}"
+
+# ── Shutdown container ──────────────────────────────────────────
+# Stop s6 supervision tree → all services stop → container exits →
+# cloud-init's docker wait returns → self-cleanup fires.
+echo "[openmedia] Shutting down container..."
+if command -v s6-svscanctl > /dev/null 2>&1; then
+  # s6-overlay v3: signal s6-svscan to bring everything down
+  s6-svscanctl -t /run/service 2>/dev/null || true
+else
+  # Fallback: kill PID 1 (init process)
+  kill 1 2>/dev/null || true
+fi
+
 echo "[openmedia] Container finished."

@@ -154,4 +154,8 @@ echo "[post-process] S3:       s3://${S3_BUCKET}/${S3_KEY}"
 echo "[post-process] Duration: ${UPLOAD_DURATION}s upload"
 echo "========================================"
 
+# Signal completion for submit-and-monitor.sh to trigger container shutdown.
+# Post-process runs as abc (UID 911) and cannot stop s6 directly.
+touch /tmp/openmedia-upload-done
+
 exit 0
