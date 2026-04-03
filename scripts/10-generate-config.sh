@@ -45,6 +45,13 @@ USENET_CONNECTIONS_VAL="${USENET_CONNECTIONS:-10}"
 
 mkdir -p /config
 
+# Build host_whitelist: allow the Caddy reverse proxy subdomain
+if [ -n "${DL_HOSTNAME:-}" ]; then
+  HOST_WHITELIST="${DL_HOSTNAME}.dl.mediatoken.de"
+else
+  HOST_WHITELIST=""
+fi
+
 sed \
   -e "s|__SABNZBD_API_KEY__|${SABNZBD_API_KEY}|g" \
   -e "s|__USENET_HOST__|${USENET_HOST}|g" \
@@ -53,6 +60,7 @@ sed \
   -e "s|__USENET_PASSWORD__|${USENET_PASSWORD}|g" \
   -e "s|__USENET_CONNECTIONS__|${USENET_CONNECTIONS_VAL}|g" \
   -e "s|__USENET_SSL__|${USENET_SSL_VAL}|g" \
+  -e "s|__HOST_WHITELIST__|${HOST_WHITELIST}|g" \
   /opt/openmedia/templates/sabnzbd.ini.template > /config/sabnzbd.ini
 
 echo "[openmedia] sabnzbd.ini written"
