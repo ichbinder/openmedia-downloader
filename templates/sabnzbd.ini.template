@@ -45,6 +45,7 @@ inet_exposure = 4
 permissions = 777
 helpful_warnings = 0
 wizard_completed = 1
+host_whitelist =
 
 [logging]
 log_level = 1
