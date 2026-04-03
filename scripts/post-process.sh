@@ -132,8 +132,9 @@ report_status "uploading" '{"status":"uploading","progress":80}'
 # Uses rclone config file (inline remote syntax breaks on special chars in secrets).
 # --s3-upload-concurrency: parallel multipart streams per file
 # --s3-chunk-size: size of each multipart part
-RCLONE_CFG="/tmp/rclone.conf"
-cat > "${RCLONE_CFG}" << RCFG
+RCLONE_CFG=$(mktemp /tmp/rclone-XXXXXX.conf)
+trap 'rm -f "${RCLONE_CFG}"' EXIT
+(umask 077; cat > "${RCLONE_CFG}" << RCFG
 [s3]
 type = s3
 provider = Other
@@ -142,6 +143,7 @@ access_key_id = ${S3_ACCESS_KEY}
 secret_access_key = ${S3_SECRET_KEY}
 region = ${S3_REGION}
 RCFG
+)
 
 UPLOAD_START=$(date +%s)
 
@@ -164,12 +166,8 @@ if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" \
 else
   echo "[post-process] ERROR: S3 upload failed"
   report_status "failed" '{"status":"failed","error":"S3 Upload fehlgeschlagen"}'
-  rm -f "${RCLONE_CFG}"
   exit 1
 fi
-
-# Clean up rclone config (contains secrets)
-rm -f "${RCLONE_CFG}"
 
 # ── Signal completed to API ─────────────────────────────────────
 echo "[post-process] Signaling status: completed"
