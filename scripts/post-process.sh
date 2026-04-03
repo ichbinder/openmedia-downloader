@@ -122,8 +122,23 @@ echo "[post-process] S3 key: ${S3_KEY}"
 
 # ── Upload to S3 ────────────────────────────────────────────────
 echo "[post-process] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
+echo "[post-process] File size: ${FILE_SIZE} bytes"
 
 report_status "uploading" '{"status":"uploading","progress":80}'
+
+# Optimize multipart upload for large files on fast connections:
+# - 64 MB chunks (default 8 MB) → fewer parts, less overhead
+# - 20 concurrent requests (default 10) → saturate 1 Gbit link
+# - Multipart threshold 64 MB (default 8 MB)
+export AWS_CLI_S3_MV_VALIDATE_SAME_S3_PATHS=true
+export AWS_CONFIG_FILE="/tmp/aws-transfer-config"
+cat > "${AWS_CONFIG_FILE}" << AWSCFG
+[default]
+s3 =
+  multipart_threshold = 64MB
+  multipart_chunksize = 64MB
+  max_concurrent_requests = 20
+AWSCFG
 
 UPLOAD_START=$(date +%s)
 
@@ -134,7 +149,12 @@ if aws s3 cp "${VIDEO_FILE}" "s3://${S3_BUCKET}/${S3_KEY}" \
 
   UPLOAD_END=$(date +%s)
   UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
-  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s)"
+  if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
+    SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
+    echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
+  else
+    echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s)"
+  fi
 else
   echo "[post-process] ERROR: S3 upload failed"
   report_status "failed" '{"status":"failed","error":"S3 Upload fehlgeschlagen"}'
