@@ -48,6 +48,7 @@ wizard_completed = 1
 host_whitelist = __HOST_WHITELIST__
 direct_unpack = 1
 
+
 [logging]
 log_level = 1
 max_log_size = 5242880
