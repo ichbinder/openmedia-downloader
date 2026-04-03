@@ -126,18 +126,18 @@ echo "[post-process] File size: ${FILE_SIZE} bytes"
 
 report_status "uploading" '{"status":"uploading","progress":80}'
 
-# Optimize multipart upload for large files on fast connections:
-# - 64 MB chunks (default 8 MB) → fewer parts, less overhead
-# - 20 concurrent requests (default 10) → saturate 1 Gbit link
-# - Multipart threshold 64 MB (default 8 MB)
+# Optimize multipart upload for large files:
+# - 128 MB chunks → fewer parts, less TLS overhead per part
+# - 8 concurrent requests → less CPU contention on small ARM VPS (cax21 = 4 cores)
+# - Multipart threshold 128 MB
 export AWS_CLI_S3_MV_VALIDATE_SAME_S3_PATHS=true
 export AWS_CONFIG_FILE="/tmp/aws-transfer-config"
 cat > "${AWS_CONFIG_FILE}" << AWSCFG
 [default]
 s3 =
-  multipart_threshold = 64MB
-  multipart_chunksize = 64MB
-  max_concurrent_requests = 20
+  multipart_threshold = 128MB
+  multipart_chunksize = 128MB
+  max_concurrent_requests = 8
 AWSCFG
 
 UPLOAD_START=$(date +%s)
