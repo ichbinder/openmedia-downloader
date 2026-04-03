@@ -21,7 +21,7 @@
 # Our custom env vars (from /opt/openmedia/.env):
 #   OPENMEDIA_JOB_ID, OPENMEDIA_JOB_HASH, OPENMEDIA_API_BASE_URL,
 #   OPENMEDIA_SERVICE_TOKEN, OPENMEDIA_S3_ENDPOINT, OPENMEDIA_S3_BUCKET,
-#   OPENMEDIA_S3_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+#   OPENMEDIA_S3_REGION, S3_ACCESS_KEY, S3_SECRET_KEY
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -43,6 +43,8 @@ TOKEN="${OPENMEDIA_SERVICE_TOKEN:-}"
 S3_ENDPOINT="${OPENMEDIA_S3_ENDPOINT:-}"
 S3_BUCKET="${OPENMEDIA_S3_BUCKET:-}"
 S3_REGION="${OPENMEDIA_S3_REGION:-hel1}"
+S3_ACCESS_KEY="${OPENMEDIA_S3_ACCESS_KEY:-}"
+S3_SECRET_KEY="${OPENMEDIA_S3_SECRET_KEY:-}"
 
 echo "========================================"
 echo "[post-process] Starting"
@@ -126,26 +128,21 @@ echo "[post-process] File size: ${FILE_SIZE} bytes"
 
 report_status "uploading" '{"status":"uploading","progress":80}'
 
-# Optimize multipart upload for large files:
-# - 128 MB chunks → fewer parts, less TLS overhead per part
-# - 8 concurrent requests → less CPU contention on small ARM VPS (cax21 = 4 cores)
-# - Multipart threshold 128 MB
-export AWS_CLI_S3_MV_VALIDATE_SAME_S3_PATHS=true
-export AWS_CONFIG_FILE="/tmp/aws-transfer-config"
-cat > "${AWS_CONFIG_FILE}" << AWSCFG
-[default]
-s3 =
-  multipart_threshold = 128MB
-  multipart_chunksize = 128MB
-  max_concurrent_requests = 8
-AWSCFG
+# rclone S3 upload — Go-based, ~9x faster than Python aws-cli.
+# Uses env-based config (no config file needed).
+# --s3-upload-concurrency: parallel multipart streams per file
+# --s3-chunk-size: size of each multipart part
+export RCLONE_CONFIG="" # disable config file, use env only
+RCLONE_REMOTE=":s3,provider=Other,endpoint=${S3_ENDPOINT},access_key_id=${S3_ACCESS_KEY},secret_access_key=${S3_SECRET_KEY},region=${S3_REGION}:"
 
 UPLOAD_START=$(date +%s)
 
-if aws s3 cp "${VIDEO_FILE}" "s3://${S3_BUCKET}/${S3_KEY}" \
-    --endpoint-url "${S3_ENDPOINT}" \
-    --region "${S3_REGION}" \
-    --no-progress; then
+if rclone copyto "${VIDEO_FILE}" "${RCLONE_REMOTE}${S3_BUCKET}/${S3_KEY}" \
+    --s3-upload-concurrency 16 \
+    --s3-chunk-size 64M \
+    --s3-no-check-bucket \
+    --no-check-dest \
+    --log-level INFO; then
 
   UPLOAD_END=$(date +%s)
   UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
