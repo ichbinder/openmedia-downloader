@@ -45,8 +45,12 @@ USENET_CONNECTIONS_VAL="${USENET_CONNECTIONS:-10}"
 
 mkdir -p /config
 
-# Build host_whitelist: allow the Caddy reverse proxy subdomain + container hostname
-HOST_WHITELIST="${DL_HOSTNAME:-}.dl.mediatoken.de"
+# Build host_whitelist: allow the Caddy reverse proxy subdomain
+if [ -n "${DL_HOSTNAME:-}" ]; then
+  HOST_WHITELIST="${DL_HOSTNAME}.dl.mediatoken.de"
+else
+  HOST_WHITELIST=""
+fi
 
 sed \
   -e "s|__SABNZBD_API_KEY__|${SABNZBD_API_KEY}|g" \
