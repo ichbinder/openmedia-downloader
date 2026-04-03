@@ -46,6 +46,7 @@ permissions = 777
 helpful_warnings = 0
 wizard_completed = 1
 host_whitelist = __HOST_WHITELIST__
+direct_unpack = 1
 
 [logging]
 log_level = 1
