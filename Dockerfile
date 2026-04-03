@@ -1,8 +1,9 @@
 FROM lscr.io/linuxserver/sabnzbd:latest
 
-# Install AWS CLI for S3 uploads and curl for API callbacks
+# Install rclone for fast S3 uploads (Go-based, ~9x faster than Python aws-cli)
+# and curl for API callbacks
 RUN apk add --no-cache \
-    aws-cli \
+    rclone \
     curl \
     bash \
     coreutils \
