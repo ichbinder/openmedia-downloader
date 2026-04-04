@@ -52,6 +52,39 @@ else
   HOST_WHITELIST=""
 fi
 
+# Build backup server block if credentials are provided
+BACKUP_BLOCK=""
+if [ -n "${USENET_BACKUP_HOST:-}" ] && [ -n "${USENET_BACKUP_USER:-}" ]; then
+  BACKUP_SSL_RAW="${USENET_BACKUP_SSL:-1}"
+  if [ "${BACKUP_SSL_RAW}" = "true" ] || [ "${BACKUP_SSL_RAW}" = "1" ]; then
+    BACKUP_SSL_VAL="1"
+  else
+    BACKUP_SSL_VAL="0"
+  fi
+  BACKUP_CONNECTIONS="${USENET_BACKUP_CONNECTIONS:-10}"
+  BACKUP_PORT="${USENET_BACKUP_PORT:-563}"
+  BACKUP_BLOCK="[[${USENET_BACKUP_HOST}]]
+host = ${USENET_BACKUP_HOST}
+port = ${BACKUP_PORT}
+username = ${USENET_BACKUP_USER}
+password = ${USENET_BACKUP_PASSWORD}
+connections = ${BACKUP_CONNECTIONS}
+ssl = ${BACKUP_SSL_VAL}
+ssl_verify = 2
+ssl_ciphers =
+enable = 1
+required = 0
+optional = 1
+retention = 0
+expire_date =
+quota =
+priority = 1
+displayname = ${USENET_BACKUP_HOST}"
+  echo "[openmedia] Backup server configured: ${USENET_BACKUP_HOST}"
+else
+  echo "[openmedia] No backup server configured"
+fi
+
 sed \
   -e "s|__SABNZBD_API_KEY__|${SABNZBD_API_KEY}|g" \
   -e "s|__USENET_HOST__|${USENET_HOST}|g" \
@@ -61,7 +94,20 @@ sed \
   -e "s|__USENET_CONNECTIONS__|${USENET_CONNECTIONS_VAL}|g" \
   -e "s|__USENET_SSL__|${USENET_SSL_VAL}|g" \
   -e "s|__HOST_WHITELIST__|${HOST_WHITELIST}|g" \
-  /opt/openmedia/templates/sabnzbd.ini.template > /config/sabnzbd.ini
+  /opt/openmedia/templates/sabnzbd.ini.template > /tmp/sabnzbd.ini.tmp
+
+# Insert backup server block (replace placeholder)
+if [ -n "${BACKUP_BLOCK}" ]; then
+  printf '%s\n' "${BACKUP_BLOCK}" > /tmp/backup-server.txt
+  sed -e '/__BACKUP_SERVER_BLOCK__/{
+    r /tmp/backup-server.txt
+    d
+  }' /tmp/sabnzbd.ini.tmp > /config/sabnzbd.ini
+  rm -f /tmp/backup-server.txt
+else
+  sed '/__BACKUP_SERVER_BLOCK__/d' /tmp/sabnzbd.ini.tmp > /config/sabnzbd.ini
+fi
+rm -f /tmp/sabnzbd.ini.tmp
 
 echo "[openmedia] sabnzbd.ini written"
 
