@@ -48,6 +48,29 @@ until curl -sf "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=version
 done
 echo "[openmedia] SABnzbd is ready (waited ${WAITED}s)"
 
+# ── Add backup Usenet server via API (INI parsing is unreliable) ──
+if [ -n "${USENET_BACKUP_HOST:-}" ] && [ -n "${USENET_BACKUP_USER:-}" ]; then
+  BACKUP_SSL_VAL="1"
+  if [ "${USENET_BACKUP_SSL:-1}" = "false" ] || [ "${USENET_BACKUP_SSL:-1}" = "0" ]; then
+    BACKUP_SSL_VAL="0"
+  fi
+  echo "[openmedia] Adding backup server: ${USENET_BACKUP_HOST}"
+  curl -sf "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=config&name=set_server&keyword=set_server&output=json" \
+    --data-urlencode "host=${USENET_BACKUP_HOST}" \
+    --data-urlencode "port=${USENET_BACKUP_PORT:-563}" \
+    --data-urlencode "username=${USENET_BACKUP_USER}" \
+    --data-urlencode "password=${USENET_BACKUP_PASSWORD}" \
+    --data-urlencode "connections=${USENET_BACKUP_CONNECTIONS:-10}" \
+    --data-urlencode "ssl=${BACKUP_SSL_VAL}" \
+    --data-urlencode "ssl_verify=2" \
+    --data-urlencode "enable=1" \
+    --data-urlencode "optional=1" \
+    --data-urlencode "priority=1" \
+    --data-urlencode "displayname=${USENET_BACKUP_HOST}" \
+    > /dev/null 2>&1 && echo "[openmedia] Backup server added" \
+    || echo "[openmedia] WARNING: Failed to add backup server"
+fi
+
 # ── Download NZB file from API ──────────────────────────────────
 echo "[openmedia] Downloading NZB file..."
 mkdir -p /downloads/staging
