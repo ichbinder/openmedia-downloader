@@ -35,7 +35,6 @@ chmod 600 /opt/openmedia/sabnzbd-api-key
 
 # Generate sabnzbd.ini from template
 USENET_SSL_RAW="${USENET_SSL:-1}"
-# Convert true/false to 1/0 (SABnzbd expects integer)
 if [ "${USENET_SSL_RAW}" = "true" ] || [ "${USENET_SSL_RAW}" = "1" ]; then
   USENET_SSL_VAL="1"
 else
@@ -45,15 +44,42 @@ USENET_CONNECTIONS_VAL="${USENET_CONNECTIONS:-10}"
 
 mkdir -p /config
 
-# Build host_whitelist: allow the Caddy reverse proxy subdomain
+# Build host_whitelist
 if [ -n "${DL_HOSTNAME:-}" ]; then
   HOST_WHITELIST="${DL_HOSTNAME}.dl.mediatoken.de"
 else
   HOST_WHITELIST=""
 fi
 
-# Build backup server block if credentials are provided
-BACKUP_BLOCK=""
+# ── Build complete [servers] section as a file ──────────────────
+cat > /tmp/servers-section.ini << SRVEOF
+[servers]
+[[${USENET_HOST}]]
+name = ${USENET_HOST}
+displayname = ${USENET_HOST}
+host = ${USENET_HOST}
+port = ${USENET_PORT}
+timeout = 60
+username = ${USENET_USER}
+password = ${USENET_PASSWORD}
+connections = ${USENET_CONNECTIONS_VAL}
+ssl = ${USENET_SSL_VAL}
+ssl_verify = 2
+ssl_ciphers = ""
+enable = 1
+required = 0
+optional = 0
+retention = 0
+expire_date = ""
+quota = ""
+usage_at_start = 0
+priority = 0
+notes = ""
+SRVEOF
+
+echo "[openmedia] Primary server: ${USENET_HOST}"
+
+# Append backup server if configured
 if [ -n "${USENET_BACKUP_HOST:-}" ] && [ -n "${USENET_BACKUP_USER:-}" ]; then
   BACKUP_SSL_RAW="${USENET_BACKUP_SSL:-1}"
   if [ "${BACKUP_SSL_RAW}" = "true" ] || [ "${BACKUP_SSL_RAW}" = "1" ]; then
@@ -63,7 +89,9 @@ if [ -n "${USENET_BACKUP_HOST:-}" ] && [ -n "${USENET_BACKUP_USER:-}" ]; then
   fi
   BACKUP_CONNECTIONS="${USENET_BACKUP_CONNECTIONS:-10}"
   BACKUP_PORT="${USENET_BACKUP_PORT:-563}"
-  BACKUP_BLOCK="[[${USENET_BACKUP_HOST}]]
+
+  cat >> /tmp/servers-section.ini << BKPEOF
+[[${USENET_BACKUP_HOST}]]
 name = ${USENET_BACKUP_HOST}
 displayname = ${USENET_BACKUP_HOST}
 host = ${USENET_BACKUP_HOST}
@@ -74,54 +102,47 @@ password = ${USENET_BACKUP_PASSWORD}
 connections = ${BACKUP_CONNECTIONS}
 ssl = ${BACKUP_SSL_VAL}
 ssl_verify = 2
-ssl_ciphers = \"\"
+ssl_ciphers = ""
 enable = 1
 required = 0
 optional = 1
 retention = 0
-expire_date = \"\"
-quota = \"\"
+expire_date = ""
+quota = ""
 usage_at_start = 0
 priority = 1
-notes = \"\""
-  echo "[openmedia] Backup server configured: ${USENET_BACKUP_HOST}"
+notes = ""
+BKPEOF
+  echo "[openmedia] Backup server: ${USENET_BACKUP_HOST}"
 else
   echo "[openmedia] No backup server configured"
 fi
 
+# ── Substitute placeholders in template (except servers) ────────
 sed \
   -e "s|__SABNZBD_API_KEY__|${SABNZBD_API_KEY}|g" \
-  -e "s|__USENET_HOST__|${USENET_HOST}|g" \
-  -e "s|__USENET_PORT__|${USENET_PORT}|g" \
-  -e "s|__USENET_USER__|${USENET_USER}|g" \
-  -e "s|__USENET_PASSWORD__|${USENET_PASSWORD}|g" \
-  -e "s|__USENET_CONNECTIONS__|${USENET_CONNECTIONS_VAL}|g" \
-  -e "s|__USENET_SSL__|${USENET_SSL_VAL}|g" \
   -e "s|__HOST_WHITELIST__|${HOST_WHITELIST}|g" \
   /opt/openmedia/templates/sabnzbd.ini.template > /tmp/sabnzbd.ini.tmp
 
-# Insert backup server block (replace placeholder)
-if [ -n "${BACKUP_BLOCK}" ]; then
-  printf '%s\n' "${BACKUP_BLOCK}" > /tmp/backup-server.txt
-  sed -e '/__BACKUP_SERVER_BLOCK__/{
-    r /tmp/backup-server.txt
-    d
-  }' /tmp/sabnzbd.ini.tmp > /config/sabnzbd.ini
-  rm -f /tmp/backup-server.txt
-else
-  sed '/__BACKUP_SERVER_BLOCK__/d' /tmp/sabnzbd.ini.tmp > /config/sabnzbd.ini
-fi
-rm -f /tmp/sabnzbd.ini.tmp
+# ── Replace __SERVERS_SECTION__ with the generated servers file ─
+sed -e '/__SERVERS_SECTION__/{
+  r /tmp/servers-section.ini
+  d
+}' /tmp/sabnzbd.ini.tmp > /config/sabnzbd.ini
+
+rm -f /tmp/sabnzbd.ini.tmp /tmp/servers-section.ini
 
 echo "[openmedia] sabnzbd.ini written"
+
+# ── Verify server count ─────────────────────────────────────────
+SERVER_COUNT=$(grep -c '^\[\[' /config/sabnzbd.ini || true)
+echo "[openmedia] Server blocks in INI: ${SERVER_COUNT}"
 
 # Create required directories with correct ownership (abc user = UID 911)
 mkdir -p /downloads/complete /downloads/watched /incomplete-downloads /downloads/nzb_backup /config/scripts /config/logs /config/admin
 chown -R abc:abc /downloads /incomplete-downloads
 
-# Write env file for post-process.sh (SABnzbd may not pass parent env to scripts)
-# File is deleted after post-process.sh reads it
-# Must be readable by abc user (UID 911) since SABnzbd runs scripts as abc
+# Write env file for post-process.sh
 cat > /opt/openmedia/.env << EOF
 OPENMEDIA_JOB_ID=${JOB_ID}
 OPENMEDIA_JOB_HASH=${JOB_HASH}

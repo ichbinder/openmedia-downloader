@@ -54,29 +54,7 @@ log_level = 1
 max_log_size = 5242880
 log_backups = 1
 
-[servers]
-[[__USENET_HOST__]]
-name = __USENET_HOST__
-displayname = __USENET_HOST__
-host = __USENET_HOST__
-port = __USENET_PORT__
-timeout = 60
-username = __USENET_USER__
-password = __USENET_PASSWORD__
-connections = __USENET_CONNECTIONS__
-ssl = __USENET_SSL__
-ssl_verify = 2
-ssl_ciphers = ""
-enable = 1
-required = 0
-optional = 0
-retention = 0
-expire_date = ""
-quota = ""
-usage_at_start = 0
-priority = 0
-notes = ""
-__BACKUP_SERVER_BLOCK__
+__SERVERS_SECTION__
 
 [categories]
 [[*]]
