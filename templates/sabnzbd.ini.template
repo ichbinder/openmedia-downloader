@@ -72,6 +72,7 @@ expire_date =
 quota =
 priority = 0
 displayname = __USENET_HOST__
+__BACKUP_SERVER_BLOCK__
 
 [categories]
 [[*]]
