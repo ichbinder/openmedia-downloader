@@ -64,22 +64,26 @@ if [ -n "${USENET_BACKUP_HOST:-}" ] && [ -n "${USENET_BACKUP_USER:-}" ]; then
   BACKUP_CONNECTIONS="${USENET_BACKUP_CONNECTIONS:-10}"
   BACKUP_PORT="${USENET_BACKUP_PORT:-563}"
   BACKUP_BLOCK="[[${USENET_BACKUP_HOST}]]
+name = ${USENET_BACKUP_HOST}
+displayname = ${USENET_BACKUP_HOST}
 host = ${USENET_BACKUP_HOST}
 port = ${BACKUP_PORT}
+timeout = 60
 username = ${USENET_BACKUP_USER}
 password = ${USENET_BACKUP_PASSWORD}
 connections = ${BACKUP_CONNECTIONS}
 ssl = ${BACKUP_SSL_VAL}
 ssl_verify = 2
-ssl_ciphers =
+ssl_ciphers = \"\"
 enable = 1
 required = 0
 optional = 1
 retention = 0
-expire_date =
-quota =
+expire_date = \"\"
+quota = \"\"
+usage_at_start = 0
 priority = 1
-displayname = ${USENET_BACKUP_HOST}"
+notes = \"\""
   echo "[openmedia] Backup server configured: ${USENET_BACKUP_HOST}"
 else
   echo "[openmedia] No backup server configured"
