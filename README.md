@@ -12,13 +12,21 @@ openmedia-api                openmedia-nzb              Hetzner VPS (on-demand)
 │                │            │              │     │ 1. sabnzbd.ini generieren│
 │                │            │              │◄────│ 2. NZB holen per URL     │
 │ PATCH /status  │◄───────────│              │     │ 3. SABnzbd lädt herunter │
-│ (callbacks)    │            │              │     │ 4. Post-Process:         │
-└──────────────┘             └──────────────┘     │    → S3 Upload           │
+│ (callbacks)    │            │              │     │    (2 Server: Primary +  │
+└──────────────┘             └──────────────┘     │     Backup)              │
+                                                   │ 4. Post-Process:         │
+                                                   │    → S3 Upload           │
                                                    │    → API Callback        │
                                                    └──────────────────────────┘
 ```
 
-**Wichtig:** Der Container holt die NZB-Datei direkt vom `openmedia-nzb` Service — nicht von der Main API. Die API baut nur die URL zusammen.
+## SABnzbd Multi-Server Config
+
+SABnzbd wird mit bis zu 2 Usenet-Servern konfiguriert:
+- **Primary** (Priority 0): Bevorzugter Server (z.B. EasyUsenet/Abavia)
+- **Backup** (Priority 1, optional): Fallback-Server (z.B. Eweka/Omicron)
+
+Die Server-Config wird im `10-generate-config` Script generiert. Die komplette `[servers]`-Section wird als Ganzes geschrieben — SABnzbd 4.5.5 erfordert ein exaktes INI-Format mit allen Feldern (name, displayname, timeout, usage_at_start, notes, etc.), sonst werden Server-Blöcke still ignoriert.
 
 ## Docker Image Aufbau
 
@@ -36,24 +44,43 @@ linuxserver/sabnzbd:latest          (Base Image)
 
 ## Environment Variables
 
+### Primary Server (erforderlich)
 | Variable | Beschreibung | Beispiel |
 |----------|-------------|---------|
-| `JOB_ID` | Download-Job ID | `abc-123-def` |
-| `JOB_HASH` | NZB-Hash (= Download-Name = S3-Key) | `4532860a...` |
-| `NZB_URL` | URL zum openmedia-nzb Service | `https://nzb.example.com/nzb/4532860a...` |
-| `API_BASE_URL` | openmedia-api URL (HTTPS in Produktion!) | `https://api.example.com` |
-| `SERVICE_TOKEN` | Auth-Token für API-Callbacks | `eyJ...` |
-| `USENET_HOST` | Usenet Server | `news.newshosting.com` |
+| `USENET_HOST` | Usenet Server | `reader.easyusenet.com` |
 | `USENET_PORT` | Port (563 für SSL) | `563` |
 | `USENET_USER` | Benutzername | `user` |
 | `USENET_PASSWORD` | Passwort | `secret` |
 | `USENET_SSL` | SSL (`1`/`0` oder `true`/`false`) | `1` |
 | `USENET_CONNECTIONS` | Parallele Verbindungen | `10` |
-| `S3_ACCESS_KEY` | Hetzner S3 Access Key | `2SC7...` |
-| `S3_SECRET_KEY` | Hetzner S3 Secret Key | `wJal...` |
-| `S3_ENDPOINT` | S3 Endpoint | `https://hel1.your-objectstorage.com` |
-| `S3_BUCKET` | Bucket Name | `openmedia-files` |
-| `S3_REGION` | Region | `hel1` |
+
+### Backup Server (optional)
+| Variable | Beschreibung | Beispiel |
+|----------|-------------|---------|
+| `USENET_BACKUP_HOST` | Backup Usenet Server | `news.eweka.nl` |
+| `USENET_BACKUP_PORT` | Backup Port | `563` |
+| `USENET_BACKUP_USER` | Backup Benutzername | `user2` |
+| `USENET_BACKUP_PASSWORD` | Backup Passwort | `secret2` |
+| `USENET_BACKUP_SSL` | Backup SSL | `1` |
+| `USENET_BACKUP_CONNECTIONS` | Backup Verbindungen | `20` |
+
+### Job & API
+| Variable | Beschreibung |
+|----------|-------------|
+| `JOB_ID` | Download-Job ID |
+| `JOB_HASH` | NZB-Hash (= Download-Name = S3-Key) |
+| `NZB_URL` | URL zum openmedia-nzb Service |
+| `API_BASE_URL` | openmedia-api URL (HTTPS in Produktion!) |
+| `SERVICE_TOKEN` | Auth-Token für API-Callbacks |
+
+### S3 Storage
+| Variable | Beschreibung |
+|----------|-------------|
+| `S3_ACCESS_KEY` | Hetzner S3 Access Key |
+| `S3_SECRET_KEY` | Hetzner S3 Secret Key |
+| `S3_ENDPOINT` | S3 Endpoint URL |
+| `S3_BUCKET` | Bucket Name |
+| `S3_REGION` | Region (default: `hel1`) |
 
 ## Hash-Kette
 
@@ -63,24 +90,19 @@ Der Hash fließt lückenlos durch — kein extra API-Call nötig:
 DB (NzbFile.hash) → ENV (JOB_HASH) → SABnzbd (nzbname) → SAB_FINAL_NAME → S3 Key
 ```
 
-## Security
+## SABnzbd INI-Format Hinweise
 
-- **Keine Secrets im Docker Image** — nur Templates mit Platzhaltern
-- **ENV-File statt -e Flags** — Credentials nicht in `/proc/cmdline` sichtbar
-- **API_BASE_URL MUSS HTTPS sein** in Produktion (Bearer Token Schutz)
-- **Env-File wird nach Lesen gelöscht** (`rm -f` in post-process.sh)
-- **S3 Upload über HTTPS** (Hetzner S3 Endpoint)
-- **VPS ist kurzlebig** — wird nach Download gelöscht, alle Daten weg
-
-## Lokale Entwicklung
-
-```bash
-cp .env.example .env
-# .env ausfüllen
-docker compose up
-```
+SABnzbd 4.5.5 ist streng beim Parsen der INI-Datei:
+- **Alle Felder müssen vorhanden sein** (name, displayname, host, port, timeout, username, password, connections, ssl, ssl_verify, ssl_ciphers, enable, required, optional, retention, expire_date, quota, usage_at_start, priority, notes)
+- **Leere Werte**: `""` (quoted empty string), nicht leer
+- **ssl_verify**: `2` = Strict (empfohlen), `1` = Default/Minimal (bei Hostname-Mismatch)
+- **Backup-Server**: `optional = 1`, `priority = 1`
+- **fail_hopeless_jobs**: `1` = Sofort abbrechen wenn zu viele Segmente fehlen
 
 ## Deployment
 
-GitHub Release → GitHub Actions → Docker Image auf GHCR (`ghcr.io/ichbinder/openmedia-downloader`).
-Cloud-Init auf Hetzner VPS pulled das Image und startet es mit `--env-file`.
+Push zu `main` → GitHub Actions → Multi-Platform Docker Image auf GHCR:
+- `ghcr.io/ichbinder/openmedia-downloader:latest`
+- Plattformen: `linux/amd64` + `linux/arm64`
+
+Die openmedia-api pulled das Image per Cloud-Init auf dem Hetzner Download-VPS.
