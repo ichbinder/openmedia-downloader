@@ -22,7 +22,8 @@ RUN apk add --no-cache \
     curl \
     bash \
     coreutils \
-    xxd
+    xxd \
+    ffmpeg
 
 # ── Replace unrar with 7zz-rar wrapper for multi-threaded extraction ──
 # Move real unrar to .real as fallback, install wrapper as /usr/bin/unrar
