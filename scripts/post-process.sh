@@ -122,6 +122,41 @@ echo "[post-process] Ext:   ${FILE_EXT_LOWER}"
 S3_KEY="${HASH}/${HASH}${FILE_EXT_LOWER}"
 echo "[post-process] S3 key: ${S3_KEY}"
 
+# ── FFmpeg Remux: create browser-streamable MP4 ─────────────────
+# Remuxes video (copy) + all audio tracks (AAC 256k) into MP4 container.
+# This runs BEFORE upload so we can upload both versions in one go.
+# If remux fails, we still upload the original — streaming just won't work.
+STREAM_FILE=""
+S3_STREAM_KEY=""
+
+echo "[post-process] Starting FFmpeg remux to MP4..."
+STREAM_FILE="${FINAL_DIR}/${HASH}_stream.mp4"
+S3_STREAM_KEY="${HASH}/${HASH}_stream.mp4"
+
+REMUX_START=$(date +%s)
+
+if ffmpeg -y -i "${VIDEO_FILE}" \
+    -c:v copy \
+    -c:a aac -b:a 256k \
+    -map 0:v:0 \
+    -map 0:a \
+    -movflags +faststart \
+    -loglevel warning \
+    "${STREAM_FILE}" 2>&1; then
+
+  REMUX_END=$(date +%s)
+  REMUX_DURATION=$((REMUX_END - REMUX_START))
+  STREAM_SIZE=$(stat -c%s "${STREAM_FILE}" 2>/dev/null || stat -f%z "${STREAM_FILE}" 2>/dev/null || echo "unknown")
+  echo "[post-process] ✅ Remux complete (${REMUX_DURATION}s)"
+  echo "[post-process] Stream file: ${STREAM_FILE}"
+  echo "[post-process] Stream size: ${STREAM_SIZE} bytes"
+  echo "[post-process] S3 stream key: ${S3_STREAM_KEY}"
+else
+  echo "[post-process] ⚠️ FFmpeg remux FAILED — continuing with original only"
+  STREAM_FILE=""
+  S3_STREAM_KEY=""
+fi
+
 # ── Upload to S3 ────────────────────────────────────────────────
 echo "[post-process] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
 echo "[post-process] File size: ${FILE_SIZE} bytes"
@@ -159,9 +194,9 @@ if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" \
   UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
   if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
     SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
-    echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
+    echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
   else
-    echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s)"
+    echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s)"
   fi
 else
   echo "[post-process] ERROR: S3 upload failed"
@@ -169,17 +204,51 @@ else
   exit 1
 fi
 
+# ── Upload stream version to S3 (if remux succeeded) ───────────
+STREAM_UPLOAD_DURATION=0
+if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
+  echo "[post-process] Uploading stream version to s3://${S3_BUCKET}/${S3_STREAM_KEY}..."
+  report_status "uploading" '{"status":"uploading","progress":90}'
+
+  STREAM_UPLOAD_START=$(date +%s)
+
+  if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" \
+      --config "${RCLONE_CFG}" \
+      --s3-upload-concurrency 16 \
+      --s3-chunk-size 64M \
+      --s3-no-check-bucket \
+      --no-check-dest \
+      --log-level INFO; then
+
+    STREAM_UPLOAD_END=$(date +%s)
+    STREAM_UPLOAD_DURATION=$((STREAM_UPLOAD_END - STREAM_UPLOAD_START))
+    echo "[post-process] ✅ Stream upload complete (${STREAM_UPLOAD_DURATION}s)"
+  else
+    echo "[post-process] ⚠️ Stream version upload FAILED — original is still available"
+    S3_STREAM_KEY=""
+  fi
+fi
+
 # ── Signal completed to API ─────────────────────────────────────
 echo "[post-process] Signaling status: completed"
 
-report_status "completed" \
-  "{\"status\":\"completed\",\"s3Key\":\"${S3_KEY}\",\"s3Bucket\":\"${S3_BUCKET}\",\"fileExtension\":\"${FILE_EXT_LOWER}\",\"progress\":100}"
+# Build the callback body — include s3StreamKey only if remux succeeded
+CALLBACK_BODY="{\"status\":\"completed\",\"s3Key\":\"${S3_KEY}\",\"s3Bucket\":\"${S3_BUCKET}\",\"fileExtension\":\"${FILE_EXT_LOWER}\",\"progress\":100"
+if [ -n "${S3_STREAM_KEY}" ]; then
+  CALLBACK_BODY="${CALLBACK_BODY},\"s3StreamKey\":\"${S3_STREAM_KEY}\""
+fi
+CALLBACK_BODY="${CALLBACK_BODY}}"
+
+report_status "completed" "${CALLBACK_BODY}"
 
 echo "========================================"
 echo "[post-process] ✅ Done!"
 echo "[post-process] Hash:     ${HASH:0:16}..."
 echo "[post-process] S3:       s3://${S3_BUCKET}/${S3_KEY}"
-echo "[post-process] Duration: ${UPLOAD_DURATION}s upload"
+if [ -n "${S3_STREAM_KEY}" ]; then
+echo "[post-process] Stream:   s3://${S3_BUCKET}/${S3_STREAM_KEY}"
+fi
+echo "[post-process] Duration: ${UPLOAD_DURATION}s upload + ${STREAM_UPLOAD_DURATION}s stream upload"
 echo "========================================"
 
 # Signal completion for submit-and-monitor.sh to trigger container shutdown.
