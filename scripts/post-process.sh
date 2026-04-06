@@ -184,8 +184,8 @@ region = ${S3_REGION}
 RCFG
 )
 
-# Common rclone flags
-RCLONE_OPTS="--config ${RCLONE_CFG} --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO"
+# Common rclone flags (array to avoid word-splitting issues)
+RCLONE_OPTS=(--config "${RCLONE_CFG}" --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
 
 # ── Parallel upload: original + stream simultaneously ───────────
 # Upload both files at the same time. CPU is idle during upload (~100% vs 400% max),
@@ -197,14 +197,14 @@ echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_S
 if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
   # Start stream upload in background
   echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY} (parallel)..."
-  rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" ${RCLONE_OPTS} &
+  rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS[@]}" &
   STREAM_PID=$!
 else
   STREAM_PID=""
 fi
 
 # Original upload in foreground (must succeed)
-if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" ${RCLONE_OPTS}; then
+if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS[@]}"; then
   ORIGINAL_OK=true
 else
   ORIGINAL_OK=false
@@ -229,21 +229,19 @@ fi
 
 if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
   SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
-  echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
+  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s total, ~${SPEED_MBS} MB/s)"
 else
-  echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s)"
+  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s total)"
 fi
 
 if [ -n "${STREAM_PID}" ]; then
   if [ "${STREAM_OK}" = "true" ]; then
-    echo "[post-process] ✅ Stream upload complete (parallel, ${UPLOAD_DURATION}s total)"
+    echo "[post-process] ✅ Stream upload complete (parallel)"
   else
     echo "[post-process] ⚠️ Stream version upload FAILED — original is still available"
     S3_STREAM_KEY=""
   fi
 fi
-
-STREAM_UPLOAD_DURATION=0
 
 # ── Signal completed to API ─────────────────────────────────────
 echo "[post-process] Signaling status: completed"
