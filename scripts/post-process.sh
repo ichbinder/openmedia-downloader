@@ -123,13 +123,16 @@ S3_KEY="${HASH}/${HASH}${FILE_EXT_LOWER}"
 echo "[post-process] S3 key: ${S3_KEY}"
 
 # ── FFmpeg Remux: create browser-streamable MP4 ─────────────────
-# Remuxes video (copy) + all audio tracks (AAC 256k) into MP4 container.
+# Remuxes video (copy) + all audio tracks to AAC stereo in MP4 container.
+# -ac 2: downmix to stereo (required for Safari iOS/Desktop compatibility)
+# -threads: use all available CPUs for faster encoding
 # This runs BEFORE upload so we can upload both versions in one go.
 # If remux fails, we still upload the original — streaming just won't work.
 STREAM_FILE=""
 S3_STREAM_KEY=""
 
-echo "[post-process] Starting FFmpeg remux to MP4..."
+THREADS=$(nproc 2>/dev/null || echo 4)
+echo "[post-process] Starting FFmpeg remux to MP4 (${THREADS} threads, stereo downmix)..."
 STREAM_FILE="${FINAL_DIR}/${HASH}_stream.mp4"
 S3_STREAM_KEY="${HASH}/${HASH}_stream.mp4"
 
@@ -137,7 +140,8 @@ REMUX_START=$(date +%s)
 
 if ffmpeg -y -i "${VIDEO_FILE}" \
     -c:v copy \
-    -c:a aac -b:a 256k \
+    -c:a aac -ac 2 -b:a 256k \
+    -threads "${THREADS}" \
     -map 0:v:0 \
     -map 0:a \
     -movflags +faststart \
