@@ -133,30 +133,13 @@ RCFG
 )
 
 # Common rclone flags (array to avoid word-splitting issues)
-# Background upload uses 4 concurrency (shares CPU with FFmpeg, MKV finishes before FFmpeg anyway)
-RCLONE_OPTS_BG=(--config "${RCLONE_CFG}" --s3-upload-concurrency 4 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
-# Foreground upload uses 12 concurrency (runs alone after FFmpeg, maximize throughput)
-RCLONE_OPTS_FG=(--config "${RCLONE_CFG}" --s3-upload-concurrency 12 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
+RCLONE_OPTS=(--config "${RCLONE_CFG}" --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
 
-# ── Pipeline: MKV upload + FFmpeg remux run in parallel ─────────
-# The original MKV is already complete — start uploading it immediately.
-# Meanwhile, FFmpeg creates the stream MP4. This overlaps ~1 min of upload
-# with the FFmpeg encoding phase. CPU during FFmpeg is ~300% (AAC is single-threaded),
-# rclone adds ~50-100% — fits within 4 vCPUs.
-# After FFmpeg finishes, upload the stream MP4.
-UPLOAD_START=$(date +%s)
-
-report_status "uploading" '{"status":"uploading","progress":75}'
-
-# Start MKV upload in background
-echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_SIZE} bytes, background)..."
-rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS_BG[@]}" &
-MKV_UPLOAD_PID=$!
-
-# ── FFmpeg Remux (runs while MKV uploads) ───────────────────────
+# ── FFmpeg Remux: create browser-streamable MP4 ─────────────────
 # Remuxes video (copy) + all audio tracks to AAC stereo in MP4 container.
 # -ac 2: downmix to stereo (required for Safari iOS/Desktop compatibility)
 # -threads: use all available CPUs for faster encoding
+# Runs BEFORE upload so both files are ready for parallel upload.
 STREAM_FILE=""
 S3_STREAM_KEY=""
 
@@ -188,22 +171,34 @@ else
   S3_STREAM_KEY=""
 fi
 
-# ── Wait for MKV upload to finish ───────────────────────────────
-echo "[post-process] Waiting for original upload to finish..."
-if wait "${MKV_UPLOAD_PID}"; then
-  echo "[post-process] ✅ Original upload complete"
-else
-  echo "[post-process] ERROR: Original S3 upload failed"
+# ── Upload both files to S3 in parallel ─────────────────────────
+# Both files upload simultaneously with 8 concurrency each.
+# CPU is idle during upload (~100% vs 400% max), two rclone processes fit easily.
+# This gives ~250 Mbps combined bandwidth vs ~150 Mbps sequential.
+UPLOAD_START=$(date +%s)
+
+report_status "uploading" '{"status":"uploading","progress":80}'
+
+echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_SIZE} bytes)..."
+
+# Start stream upload in background (if remux succeeded)
+STREAM_PID=""
+if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
+  echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY} (parallel)..."
+  rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS[@]}" &
+  STREAM_PID=$!
+fi
+
+# Original upload in foreground (must succeed)
+if ! rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS[@]}"; then
+  echo "[post-process] ERROR: S3 upload failed"
   report_status "failed" '{"status":"failed","error":"S3 Upload fehlgeschlagen"}'
   exit 1
 fi
 
-# ── Upload stream MP4 (after FFmpeg is done) ────────────────────
-if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
-  echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY}..."
-  report_status "uploading" '{"status":"uploading","progress":90}'
-
-  if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS_FG[@]}"; then
+# Wait for stream upload if started
+if [ -n "${STREAM_PID}" ]; then
+  if wait "${STREAM_PID}"; then
     echo "[post-process] ✅ Stream upload complete"
   else
     echo "[post-process] ⚠️ Stream upload FAILED — original is still available"
@@ -216,9 +211,9 @@ UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
 
 if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
   SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
-  echo "[post-process] ✅ Pipeline complete (${UPLOAD_DURATION}s total, ~${SPEED_MBS} MB/s effective)"
+  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
 else
-  echo "[post-process] ✅ Pipeline complete (${UPLOAD_DURATION}s total)"
+  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s)"
 fi
 
 # ── Signal completed to API ─────────────────────────────────────
