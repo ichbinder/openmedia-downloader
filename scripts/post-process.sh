@@ -169,8 +169,8 @@ report_status "uploading" '{"status":"uploading","progress":80}'
 
 # rclone S3 upload — Go-based, ~9x faster than Python aws-cli.
 # Uses rclone config file (inline remote syntax breaks on special chars in secrets).
-# --s3-upload-concurrency: parallel multipart streams per file
-# --s3-chunk-size: size of each multipart part
+# --s3-upload-concurrency: parallel multipart streams per file (8 to stay within Hetzner limits)
+# --s3-chunk-size: 100M chunks — fewer, larger parts = less HTTP overhead
 RCLONE_CFG=$(mktemp /tmp/rclone-XXXXXX.conf)
 trap 'rm -f "${RCLONE_CFG}"' EXIT
 (umask 077; cat > "${RCLONE_CFG}" << RCFG
@@ -184,54 +184,66 @@ region = ${S3_REGION}
 RCFG
 )
 
+# Common rclone flags
+RCLONE_OPTS="--config ${RCLONE_CFG} --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO"
+
+# ── Parallel upload: original + stream simultaneously ───────────
+# Upload both files at the same time. CPU is idle during upload (~100% vs 400% max),
+# so two rclone processes fit easily. Hetzner S3 limits per-connection, not total bandwidth.
 UPLOAD_START=$(date +%s)
 
-if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" \
-    --config "${RCLONE_CFG}" \
-    --s3-upload-concurrency 16 \
-    --s3-chunk-size 64M \
-    --s3-no-check-bucket \
-    --no-check-dest \
-    --log-level INFO; then
+echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_SIZE} bytes)..."
 
-  UPLOAD_END=$(date +%s)
-  UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
-  if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
-    SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
-    echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
-  else
-    echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s)"
-  fi
+if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
+  # Start stream upload in background
+  echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY} (parallel)..."
+  rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" ${RCLONE_OPTS} &
+  STREAM_PID=$!
 else
+  STREAM_PID=""
+fi
+
+# Original upload in foreground (must succeed)
+if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" ${RCLONE_OPTS}; then
+  ORIGINAL_OK=true
+else
+  ORIGINAL_OK=false
+fi
+
+# Wait for stream upload if it was started
+STREAM_OK=false
+if [ -n "${STREAM_PID}" ]; then
+  if wait "${STREAM_PID}"; then
+    STREAM_OK=true
+  fi
+fi
+
+UPLOAD_END=$(date +%s)
+UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
+
+if [ "${ORIGINAL_OK}" != "true" ]; then
   echo "[post-process] ERROR: S3 upload failed"
   report_status "failed" '{"status":"failed","error":"S3 Upload fehlgeschlagen"}'
   exit 1
 fi
 
-# ── Upload stream version to S3 (if remux succeeded) ───────────
-STREAM_UPLOAD_DURATION=0
-if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
-  echo "[post-process] Uploading stream version to s3://${S3_BUCKET}/${S3_STREAM_KEY}..."
-  report_status "uploading" '{"status":"uploading","progress":90}'
+if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
+  SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
+  echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s, ~${SPEED_MBS} MB/s)"
+else
+  echo "[post-process] ✅ Original upload complete (${UPLOAD_DURATION}s)"
+fi
 
-  STREAM_UPLOAD_START=$(date +%s)
-
-  if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" \
-      --config "${RCLONE_CFG}" \
-      --s3-upload-concurrency 16 \
-      --s3-chunk-size 64M \
-      --s3-no-check-bucket \
-      --no-check-dest \
-      --log-level INFO; then
-
-    STREAM_UPLOAD_END=$(date +%s)
-    STREAM_UPLOAD_DURATION=$((STREAM_UPLOAD_END - STREAM_UPLOAD_START))
-    echo "[post-process] ✅ Stream upload complete (${STREAM_UPLOAD_DURATION}s)"
+if [ -n "${STREAM_PID}" ]; then
+  if [ "${STREAM_OK}" = "true" ]; then
+    echo "[post-process] ✅ Stream upload complete (parallel, ${UPLOAD_DURATION}s total)"
   else
     echo "[post-process] ⚠️ Stream version upload FAILED — original is still available"
     S3_STREAM_KEY=""
   fi
 fi
+
+STREAM_UPLOAD_DURATION=0
 
 # ── Signal completed to API ─────────────────────────────────────
 echo "[post-process] Signaling status: completed"
@@ -252,7 +264,7 @@ echo "[post-process] S3:       s3://${S3_BUCKET}/${S3_KEY}"
 if [ -n "${S3_STREAM_KEY}" ]; then
 echo "[post-process] Stream:   s3://${S3_BUCKET}/${S3_STREAM_KEY}"
 fi
-echo "[post-process] Duration: ${UPLOAD_DURATION}s upload + ${STREAM_UPLOAD_DURATION}s stream upload"
+echo "[post-process] Duration: ${UPLOAD_DURATION}s upload (parallel)"
 echo "========================================"
 
 # Signal completion for submit-and-monitor.sh to trigger container shutdown.
