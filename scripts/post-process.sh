@@ -133,7 +133,10 @@ RCFG
 )
 
 # Common rclone flags (array to avoid word-splitting issues)
-RCLONE_OPTS=(--config "${RCLONE_CFG}" --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
+# Background upload uses 4 concurrency (shares CPU with FFmpeg, MKV finishes before FFmpeg anyway)
+RCLONE_OPTS_BG=(--config "${RCLONE_CFG}" --s3-upload-concurrency 4 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
+# Foreground upload uses 12 concurrency (runs alone after FFmpeg, maximize throughput)
+RCLONE_OPTS_FG=(--config "${RCLONE_CFG}" --s3-upload-concurrency 12 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
 
 # ── Pipeline: MKV upload + FFmpeg remux run in parallel ─────────
 # The original MKV is already complete — start uploading it immediately.
@@ -147,7 +150,7 @@ report_status "uploading" '{"status":"uploading","progress":75}'
 
 # Start MKV upload in background
 echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_SIZE} bytes, background)..."
-rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS[@]}" &
+rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS_BG[@]}" &
 MKV_UPLOAD_PID=$!
 
 # ── FFmpeg Remux (runs while MKV uploads) ───────────────────────
@@ -200,7 +203,7 @@ if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
   echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY}..."
   report_status "uploading" '{"status":"uploading","progress":90}'
 
-  if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS[@]}"; then
+  if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS_FG[@]}"; then
     echo "[post-process] ✅ Stream upload complete"
   else
     echo "[post-process] ⚠️ Stream upload FAILED — original is still available"
