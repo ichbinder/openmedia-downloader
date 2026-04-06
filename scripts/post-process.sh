@@ -86,10 +86,6 @@ if [ -z "${FINAL_DIR}" ] || [ ! -d "${FINAL_DIR}" ]; then
   exit 1
 fi
 
-# ── Signal uploading status ─────────────────────────────────────
-echo "[post-process] Signaling status: uploading"
-report_status "uploading" '{"status":"uploading","progress":75}'
-
 # ── Find video file ─────────────────────────────────────────────
 echo "[post-process] Searching for video file in ${FINAL_DIR}..."
 
@@ -122,12 +118,42 @@ echo "[post-process] Ext:   ${FILE_EXT_LOWER}"
 S3_KEY="${HASH}/${HASH}${FILE_EXT_LOWER}"
 echo "[post-process] S3 key: ${S3_KEY}"
 
-# ── FFmpeg Remux: create browser-streamable MP4 ─────────────────
+# ── Prepare rclone config (needed for all uploads) ──────────────
+RCLONE_CFG=$(mktemp /tmp/rclone-XXXXXX.conf)
+trap 'rm -f "${RCLONE_CFG}"' EXIT
+(umask 077; cat > "${RCLONE_CFG}" << RCFG
+[s3]
+type = s3
+provider = Other
+endpoint = ${S3_ENDPOINT}
+access_key_id = ${S3_ACCESS_KEY}
+secret_access_key = ${S3_SECRET_KEY}
+region = ${S3_REGION}
+RCFG
+)
+
+# Common rclone flags (array to avoid word-splitting issues)
+RCLONE_OPTS=(--config "${RCLONE_CFG}" --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
+
+# ── Pipeline: MKV upload + FFmpeg remux run in parallel ─────────
+# The original MKV is already complete — start uploading it immediately.
+# Meanwhile, FFmpeg creates the stream MP4. This overlaps ~1 min of upload
+# with the FFmpeg encoding phase. CPU during FFmpeg is ~300% (AAC is single-threaded),
+# rclone adds ~50-100% — fits within 4 vCPUs.
+# After FFmpeg finishes, upload the stream MP4.
+UPLOAD_START=$(date +%s)
+
+report_status "uploading" '{"status":"uploading","progress":75}'
+
+# Start MKV upload in background
+echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_SIZE} bytes, background)..."
+rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS[@]}" &
+MKV_UPLOAD_PID=$!
+
+# ── FFmpeg Remux (runs while MKV uploads) ───────────────────────
 # Remuxes video (copy) + all audio tracks to AAC stereo in MP4 container.
 # -ac 2: downmix to stereo (required for Safari iOS/Desktop compatibility)
 # -threads: use all available CPUs for faster encoding
-# This runs BEFORE upload so we can upload both versions in one go.
-# If remux fails, we still upload the original — streaming just won't work.
 STREAM_FILE=""
 S3_STREAM_KEY=""
 
@@ -152,95 +178,44 @@ if ffmpeg -y -i "${VIDEO_FILE}" \
   REMUX_DURATION=$((REMUX_END - REMUX_START))
   STREAM_SIZE=$(stat -c%s "${STREAM_FILE}" 2>/dev/null || stat -f%z "${STREAM_FILE}" 2>/dev/null || echo "unknown")
   echo "[post-process] ✅ Remux complete (${REMUX_DURATION}s)"
-  echo "[post-process] Stream file: ${STREAM_FILE}"
   echo "[post-process] Stream size: ${STREAM_SIZE} bytes"
-  echo "[post-process] S3 stream key: ${S3_STREAM_KEY}"
 else
   echo "[post-process] ⚠️ FFmpeg remux FAILED — continuing with original only"
   STREAM_FILE=""
   S3_STREAM_KEY=""
 fi
 
-# ── Upload to S3 ────────────────────────────────────────────────
-echo "[post-process] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
-echo "[post-process] File size: ${FILE_SIZE} bytes"
+# ── Wait for MKV upload to finish ───────────────────────────────
+echo "[post-process] Waiting for original upload to finish..."
+if wait "${MKV_UPLOAD_PID}"; then
+  echo "[post-process] ✅ Original upload complete"
+else
+  echo "[post-process] ERROR: Original S3 upload failed"
+  report_status "failed" '{"status":"failed","error":"S3 Upload fehlgeschlagen"}'
+  exit 1
+fi
 
-report_status "uploading" '{"status":"uploading","progress":80}'
-
-# rclone S3 upload — Go-based, ~9x faster than Python aws-cli.
-# Uses rclone config file (inline remote syntax breaks on special chars in secrets).
-# --s3-upload-concurrency: parallel multipart streams per file (8 to stay within Hetzner limits)
-# --s3-chunk-size: 100M chunks — fewer, larger parts = less HTTP overhead
-RCLONE_CFG=$(mktemp /tmp/rclone-XXXXXX.conf)
-trap 'rm -f "${RCLONE_CFG}"' EXIT
-(umask 077; cat > "${RCLONE_CFG}" << RCFG
-[s3]
-type = s3
-provider = Other
-endpoint = ${S3_ENDPOINT}
-access_key_id = ${S3_ACCESS_KEY}
-secret_access_key = ${S3_SECRET_KEY}
-region = ${S3_REGION}
-RCFG
-)
-
-# Common rclone flags (array to avoid word-splitting issues)
-RCLONE_OPTS=(--config "${RCLONE_CFG}" --s3-upload-concurrency 8 --s3-chunk-size 100M --s3-no-check-bucket --no-check-dest --log-level INFO)
-
-# ── Parallel upload: original + stream simultaneously ───────────
-# Upload both files at the same time. CPU is idle during upload (~100% vs 400% max),
-# so two rclone processes fit easily. Hetzner S3 limits per-connection, not total bandwidth.
-UPLOAD_START=$(date +%s)
-
-echo "[post-process] Uploading original to s3://${S3_BUCKET}/${S3_KEY} (${FILE_SIZE} bytes)..."
-
+# ── Upload stream MP4 (after FFmpeg is done) ────────────────────
 if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
-  # Start stream upload in background
-  echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY} (parallel)..."
-  rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS[@]}" &
-  STREAM_PID=$!
-else
-  STREAM_PID=""
-fi
+  echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY}..."
+  report_status "uploading" '{"status":"uploading","progress":90}'
 
-# Original upload in foreground (must succeed)
-if rclone copyto "${VIDEO_FILE}" "s3:${S3_BUCKET}/${S3_KEY}" "${RCLONE_OPTS[@]}"; then
-  ORIGINAL_OK=true
-else
-  ORIGINAL_OK=false
-fi
-
-# Wait for stream upload if it was started
-STREAM_OK=false
-if [ -n "${STREAM_PID}" ]; then
-  if wait "${STREAM_PID}"; then
-    STREAM_OK=true
+  if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS[@]}"; then
+    echo "[post-process] ✅ Stream upload complete"
+  else
+    echo "[post-process] ⚠️ Stream upload FAILED — original is still available"
+    S3_STREAM_KEY=""
   fi
 fi
 
 UPLOAD_END=$(date +%s)
 UPLOAD_DURATION=$((UPLOAD_END - UPLOAD_START))
 
-if [ "${ORIGINAL_OK}" != "true" ]; then
-  echo "[post-process] ERROR: S3 upload failed"
-  report_status "failed" '{"status":"failed","error":"S3 Upload fehlgeschlagen"}'
-  exit 1
-fi
-
 if [ "${UPLOAD_DURATION}" -gt 0 ] && [ "${FILE_SIZE}" != "unknown" ]; then
   SPEED_MBS=$(( FILE_SIZE / UPLOAD_DURATION / 1024 / 1024 ))
-  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s total, ~${SPEED_MBS} MB/s)"
+  echo "[post-process] ✅ Pipeline complete (${UPLOAD_DURATION}s total, ~${SPEED_MBS} MB/s effective)"
 else
-  echo "[post-process] ✅ Upload complete (${UPLOAD_DURATION}s total)"
-fi
-
-if [ -n "${STREAM_PID}" ]; then
-  if [ "${STREAM_OK}" = "true" ]; then
-    echo "[post-process] ✅ Stream upload complete (parallel)"
-  else
-    echo "[post-process] ⚠️ Stream version upload FAILED — original is still available"
-    S3_STREAM_KEY=""
-  fi
+  echo "[post-process] ✅ Pipeline complete (${UPLOAD_DURATION}s total)"
 fi
 
 # ── Signal completed to API ─────────────────────────────────────
@@ -262,7 +237,7 @@ echo "[post-process] S3:       s3://${S3_BUCKET}/${S3_KEY}"
 if [ -n "${S3_STREAM_KEY}" ]; then
 echo "[post-process] Stream:   s3://${S3_BUCKET}/${S3_STREAM_KEY}"
 fi
-echo "[post-process] Duration: ${UPLOAD_DURATION}s upload (parallel)"
+echo "[post-process] Duration: ${UPLOAD_DURATION}s (remux + upload pipelined)"
 echo "========================================"
 
 # Signal completion for submit-and-monitor.sh to trigger container shutdown.
