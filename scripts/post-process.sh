@@ -86,10 +86,6 @@ if [ -z "${FINAL_DIR}" ] || [ ! -d "${FINAL_DIR}" ]; then
   exit 1
 fi
 
-# ── Signal uploading status ─────────────────────────────────────
-echo "[post-process] Signaling status: uploading"
-report_status "uploading" '{"status":"uploading","progress":75}'
-
 # ── Find video file ─────────────────────────────────────────────
 echo "[post-process] Searching for video file in ${FINAL_DIR}..."
 
@@ -200,13 +196,11 @@ else
 fi
 
 # ── Upload stream MP4 (after FFmpeg is done) ────────────────────
-STREAM_OK=false
 if [ -n "${STREAM_FILE}" ] && [ -f "${STREAM_FILE}" ]; then
   echo "[post-process] Uploading stream to s3://${S3_BUCKET}/${S3_STREAM_KEY}..."
   report_status "uploading" '{"status":"uploading","progress":90}'
 
   if rclone copyto "${STREAM_FILE}" "s3:${S3_BUCKET}/${S3_STREAM_KEY}" "${RCLONE_OPTS[@]}"; then
-    STREAM_OK=true
     echo "[post-process] ✅ Stream upload complete"
   else
     echo "[post-process] ⚠️ Stream upload FAILED — original is still available"
