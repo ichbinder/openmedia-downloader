@@ -5,6 +5,12 @@
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# Source bootstrap config if available (written by 00-fetch-config)
+if [ -f /opt/openmedia/api-env.sh ]; then
+  # shellcheck disable=SC1091
+  source /opt/openmedia/api-env.sh
+fi
+
 # disable_api_key=1 in sabnzbd.ini means no key needed.
 # Using the generated key would fail after SABnzbd rotates it internally.
 SABNZBD_API_KEY=""
