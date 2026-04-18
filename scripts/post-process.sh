@@ -30,8 +30,9 @@ if [ -f /opt/openmedia/.env ]; then
   set -a
   source /opt/openmedia/.env
   set +a
-  # Delete env file after reading — secrets no longer needed on disk
+  # Delete env files after reading — secrets no longer needed on disk
   rm -f /opt/openmedia/.env
+  rm -f /opt/openmedia/api-env.sh
 fi
 
 FINAL_DIR="${1:-${SAB_COMPLETE_DIR:-}}"

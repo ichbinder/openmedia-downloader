@@ -23,7 +23,8 @@ RUN apk add --no-cache \
     bash \
     coreutils \
     xxd \
-    ffmpeg
+    ffmpeg \
+    jq
 
 # ── Replace unrar with 7zz-rar wrapper for multi-threaded extraction ──
 # Move real unrar to .real as fallback, install wrapper as /usr/bin/unrar
@@ -32,8 +33,13 @@ RUN mv /usr/bin/unrar /usr/bin/unrar.real \
  && chmod +x /usr/bin/unrar-wrapper \
  && ln -sf /usr/bin/unrar-wrapper /usr/bin/unrar
 
+# Bootstrap script: fetches config from API using 3 ENV vars
+# Runs FIRST during s6 Stage 2 (cont-init.d), before config generation
+COPY scripts/00-fetch-config.sh /etc/cont-init.d/00-fetch-config
+RUN chmod +x /etc/cont-init.d/00-fetch-config
+
 # Custom init script: generates sabnzbd.ini before SABnzbd starts
-# Runs during s6 Stage 2 (cont-init.d), before services start
+# Runs during s6 Stage 2 (cont-init.d), after bootstrap
 COPY scripts/10-generate-config.sh /etc/cont-init.d/10-generate-config
 RUN chmod +x /etc/cont-init.d/10-generate-config
 

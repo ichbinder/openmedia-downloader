@@ -5,6 +5,13 @@
 # ─────────────────────────────────────────────────────────────────
 set -euo pipefail
 
+# Source bootstrap config if available (written by 00-fetch-config)
+if [ -f /opt/openmedia/api-env.sh ]; then
+  echo "[openmedia] Sourcing bootstrap config from /opt/openmedia/api-env.sh"
+  # shellcheck disable=SC1091
+  source /opt/openmedia/api-env.sh
+fi
+
 echo "[openmedia] ============================================="
 echo "[openmedia] Generating SABnzbd configuration..."
 echo "[openmedia] Job ID:   ${JOB_ID:-not set}"
