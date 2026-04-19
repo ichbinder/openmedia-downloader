@@ -42,6 +42,7 @@ SABNZBD_API_KEY=$(head -c 32 /dev/urandom | xxd -p | tr -d '\n' | head -c 32)
 echo "[openmedia] Generated SABnzbd API key"
 echo "${SABNZBD_API_KEY}" > /opt/openmedia/sabnzbd-api-key
 chmod 600 /opt/openmedia/sabnzbd-api-key
+chown abc:abc /opt/openmedia/sabnzbd-api-key
 
 mkdir -p /config
 
