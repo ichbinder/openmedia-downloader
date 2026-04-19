@@ -96,7 +96,7 @@ S3_REGION=$(echo "${RESPONSE}" | jq -r '.config.s3Region')
 USENET_SERVERS=$(echo "${RESPONSE}" | jq -c '.config.usenetServers')
 
 # Build the NZB download URL from service URL + hash
-NZB_URL="${NZB_SERVICE_URL}/files/${JOB_HASH}"
+NZB_URL="${NZB_SERVICE_URL}/nzb/${JOB_HASH}.nzb"
 
 # Validate critical fields
 for var_name in JOB_HASH S3_ACCESS_KEY S3_SECRET_KEY S3_ENDPOINT S3_BUCKET; do

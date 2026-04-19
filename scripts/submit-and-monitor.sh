@@ -77,13 +77,12 @@ if [ -n "${USENET_BACKUP_HOST:-}" ] && [ -n "${USENET_BACKUP_USER:-}" ]; then
     || echo "[openmedia] WARNING: Failed to add backup server"
 fi
 
-# ── Download NZB file from API ──────────────────────────────────
+# ── Download NZB file from NZB service ─────────────────────────
 echo "[openmedia] Downloading NZB file..."
 mkdir -p /downloads/staging
 NZB_FILE="/downloads/staging/${JOB_HASH}.nzb"
 
 HTTP_STATUS=$(curl -sf -w "%{http_code}" \
-  -H "Authorization: Bearer ${SERVICE_TOKEN}" \
   -o "${NZB_FILE}" \
   "${NZB_URL}")
 
