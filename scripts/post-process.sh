@@ -31,8 +31,9 @@ if [ -f /opt/openmedia/.env ]; then
   source /opt/openmedia/.env
   set +a
   # Delete env files after reading — secrets no longer needed on disk
-  rm -f /opt/openmedia/.env
-  rm -f /opt/openmedia/api-env.sh
+  # Use || true because the directory may be owned by root while script runs as abc (UID 911)
+  rm -f /opt/openmedia/.env || true
+  rm -f /opt/openmedia/api-env.sh || true
 fi
 
 FINAL_DIR="${1:-${SAB_COMPLETE_DIR:-}}"
