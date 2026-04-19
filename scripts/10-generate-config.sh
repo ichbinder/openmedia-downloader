@@ -163,7 +163,7 @@ echo "[openmedia] Server blocks in INI: ${BLOCK_COUNT}"
 
 # Create required directories with correct ownership (abc user = UID 911)
 mkdir -p /downloads/complete /downloads/watched /incomplete-downloads /downloads/nzb_backup /config/scripts /config/logs /config/admin
-chown -R abc:abc /downloads /incomplete-downloads /config/logs /config/admin
+chown -R abc:abc /downloads /incomplete-downloads /config/scripts /config/logs /config/admin
 
 # Write env file for post-process.sh
 cat > /opt/openmedia/.env << EOF
