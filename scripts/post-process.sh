@@ -101,9 +101,54 @@ for ext in mkv mp4 avi m4v wmv; do
 done
 
 if [ -z "${VIDEO_FILE}" ]; then
-  echo "[post-process] ERROR: No video file found (>10MB) in ${FINAL_DIR}"
+  echo "[post-process] No video file found (>10MB) — checking for inner NZB (wrapper NZB pattern)..."
   echo "[post-process] Directory contents:"
   find "${FINAL_DIR}" -type f -printf '%s %p\n' 2>/dev/null | sort -rn | head -20
+
+  # ── Wrapper NZB detection: some NZBs contain a small encrypted RAR ──
+  # which itself contains the real NZB pointing to the actual film data.
+  # Anti-takedown tactic: DMCA bots only see the outer NZB references.
+  INNER_NZB=$(find "${FINAL_DIR}" -type f -iname "*.nzb" 2>/dev/null | head -1)
+
+  if [ -n "${INNER_NZB}" ]; then
+    echo "[post-process] Found inner NZB: ${INNER_NZB}"
+    INNER_SIZE=$(stat -c%s "${INNER_NZB}" 2>/dev/null || stat -f%z "${INNER_NZB}" 2>/dev/null || echo "0")
+    echo "[post-process] Inner NZB size: ${INNER_SIZE} bytes"
+
+    # Sanity check: inner NZB should be a valid XML file (starts with <?xml or <nzb)
+    if head -c 200 "${INNER_NZB}" | grep -qi '<nzb\|<?xml'; then
+      echo "[post-process] Inner NZB looks valid — submitting to SABnzbd..."
+
+      # Read SABnzbd API key (same logic as submit-and-monitor.sh)
+      SABNZBD_API_KEY=""
+      if [ -f /opt/openmedia/sabnzbd-api-key ]; then
+        SABNZBD_API_KEY=$(cat /opt/openmedia/sabnzbd-api-key)
+      fi
+
+      INNER_RESPONSE=$(curl -sf \
+        "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=addlocalfile&name=${INNER_NZB}&nzbname=${HASH}&pp=3&output=json" 2>&1 || echo "")
+
+      echo "[post-process] SABnzbd inner submit response: ${INNER_RESPONSE}"
+
+      if echo "${INNER_RESPONSE}" | grep -q "SABnzbd_nzo_"; then
+        echo "[post-process] ✅ Inner NZB submitted — SABnzbd will download the real content"
+        echo "[post-process] Setting inner-nzb marker for submit-and-monitor.sh"
+        touch /tmp/openmedia-inner-nzb
+        report_status "downloading" '{"status":"downloading","progress":15}'
+        exit 0
+      else
+        echo "[post-process] ERROR: Failed to submit inner NZB to SABnzbd"
+        report_status "failed" '{"status":"failed","error":"Inner NZB konnte nicht an SABnzbd übergeben werden."}'
+        exit 1
+      fi
+    else
+      echo "[post-process] Inner NZB file does not look like valid NZB XML"
+      report_status "failed" '{"status":"failed","error":"Keine Videodatei gefunden, innere NZB-Datei ungültig."}'
+      exit 1
+    fi
+  fi
+
+  # No video, no inner NZB — genuine failure
   report_status "failed" '{"status":"failed","error":"Keine Videodatei gefunden nach dem Entpacken."}'
   exit 1
 fi
