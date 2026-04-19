@@ -127,12 +127,13 @@ POLL_INTERVAL=15
 MAX_RUNTIME=21600  # 6 hours max
 ELAPSED=0
 LAST_PROGRESS=10
+# Track expected completions — incremented when inner NZB (wrapper pattern) is detected.
+# History may contain multiple entries with the same hash; we only react to new completions.
+EXPECTED_COMPLETIONS=1
 
 while [ $ELAPSED -lt $MAX_RUNTIME ]; do
   sleep $POLL_INTERVAL
   ELAPSED=$((ELAPSED + POLL_INTERVAL))
-
-  HISTORY_JSON=$(curl -sf "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=history&output=json" 2>/dev/null || echo "")
 
   # Check if post-process already signaled completion (faster than polling SABnzbd)
   if [ -f /tmp/openmedia-upload-done ]; then
@@ -140,11 +141,27 @@ while [ $ELAPSED -lt $MAX_RUNTIME ]; do
     break
   fi
 
-  if echo "${HISTORY_JSON}" | grep -q "${JOB_HASH}"; then
-    JOB_STATUS=$(echo "${HISTORY_JSON}" | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)
+  # ── Inner NZB marker: wrapper NZB pattern detected by post-process ──
+  # post-process.sh found no video but found an inner .nzb file, submitted it
+  # to SABnzbd, and set this marker. We need to wait for the inner download.
+  if [ -f /tmp/openmedia-inner-nzb ]; then
+    echo "[openmedia] Inner NZB detected — wrapper NZB pattern!"
+    echo "[openmedia] Waiting for inner download to complete..."
+    rm -f /tmp/openmedia-inner-nzb
+    EXPECTED_COMPLETIONS=$((EXPECTED_COMPLETIONS + 1))
+    continue
+  fi
 
-    if [ "${JOB_STATUS}" = "Completed" ]; then
-      echo "[openmedia] SABnzbd reports: Completed! Waiting for post-process..."
+  # Filter history by our hash — avoids counting unrelated jobs
+  HISTORY_JSON=$(curl -sf "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=history&search=${JOB_HASH}&output=json" 2>/dev/null || echo "")
+
+  if echo "${HISTORY_JSON}" | grep -q "${JOB_HASH}"; then
+    # Count completions/failures for our hash only (search filter ensures this)
+    COMPLETED_COUNT=$(echo "${HISTORY_JSON}" | grep -o '"status":"Completed"' | wc -l | tr -d ' ')
+    FAILED_COUNT=$(echo "${HISTORY_JSON}" | grep -o '"status":"Failed"' | wc -l | tr -d ' ')
+
+    if [ "${COMPLETED_COUNT}" -ge "${EXPECTED_COMPLETIONS}" ]; then
+      echo "[openmedia] SABnzbd reports: Completed! (${COMPLETED_COUNT}/${EXPECTED_COMPLETIONS}) Waiting for post-process..."
       # Wait for post-process to finish S3 upload + API callback
       PP_WAIT=0
       while [ $PP_WAIT -lt 600 ]; do
@@ -152,11 +169,27 @@ while [ $ELAPSED -lt $MAX_RUNTIME ]; do
           echo "[openmedia] Post-process finished (waited ${PP_WAIT}s)"
           break
         fi
+        # Check again for inner NZB (could be nested multiple levels deep)
+        if [ -f /tmp/openmedia-inner-nzb ]; then
+          echo "[openmedia] Another inner NZB detected — deeper wrapper nesting!"
+          rm -f /tmp/openmedia-inner-nzb
+          EXPECTED_COMPLETIONS=$((EXPECTED_COMPLETIONS + 1))
+          PP_WAIT=-1
+          break
+        fi
         sleep 5
         PP_WAIT=$((PP_WAIT + 5))
       done
+      # If another inner NZB was found, continue monitoring
+      if [ $PP_WAIT -eq -1 ]; then
+        continue
+      fi
       break
-    elif [ "${JOB_STATUS}" = "Failed" ]; then
+    fi
+
+    # Check for failures — but only for the latest job (inner download)
+    # The outer wrapper completing successfully is expected
+    if [ "${FAILED_COUNT}" -gt 0 ] && [ "${COMPLETED_COUNT}" -lt "${EXPECTED_COMPLETIONS}" ]; then
       FAIL_MSG=$(echo "${HISTORY_JSON}" | grep -o '"fail_message":"[^"]*"' | head -1 | cut -d'"' -f4)
       echo "[openmedia] SABnzbd reports: Failed! Reason: ${FAIL_MSG}"
       curl -sf -X PATCH "${API_BASE_URL}/downloads/jobs/${JOB_ID}/status" \
