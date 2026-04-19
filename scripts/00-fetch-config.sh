@@ -99,7 +99,7 @@ USENET_SERVERS=$(echo "${RESPONSE}" | jq -c '.config.usenetServers')
 NZB_URL="${NZB_SERVICE_URL}/nzb/${JOB_HASH}.nzb"
 
 # Validate critical fields
-for var_name in JOB_HASH S3_ACCESS_KEY S3_SECRET_KEY S3_ENDPOINT S3_BUCKET; do
+for var_name in JOB_HASH NZB_SERVICE_URL S3_ACCESS_KEY S3_SECRET_KEY S3_ENDPOINT S3_BUCKET; do
   eval "val=\${${var_name}}"
   if [ -z "${val}" ] || [ "${val}" = "null" ]; then
     echo "[openmedia] FATAL: Bootstrap response missing required field: ${var_name}"
