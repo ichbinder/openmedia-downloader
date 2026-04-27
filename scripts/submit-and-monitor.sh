@@ -226,8 +226,7 @@ if [ $ELAPSED -ge $MAX_RUNTIME ]; then
     -d '{"status":"failed","error":"Download timeout (6h)"}' || true
 fi
 
-# Check final status
-sleep 10
+# Check final status (no delay — status is already known at this point)
 FINAL_STATUS=$(curl -sf \
   -H "Authorization: Bearer ${SERVICE_TOKEN}" \
   "${API_BASE_URL}/downloads/jobs/${JOB_ID}" 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
