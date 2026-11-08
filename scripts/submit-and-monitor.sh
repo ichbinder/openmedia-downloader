@@ -84,7 +84,7 @@ NZB_FILE="/downloads/staging/${JOB_HASH}.nzb"
 
 HTTP_STATUS=$(curl -sf -w "%{http_code}" \
   -o "${NZB_FILE}" \
-  "${NZB_URL}")
+  "${NZB_URL}" || true)
 
 if [ "$HTTP_STATUS" != "200" ] || [ ! -s "${NZB_FILE}" ]; then
   echo "[openmedia] ERROR: Failed to download NZB (HTTP ${HTTP_STATUS})"
@@ -100,11 +100,11 @@ echo "[openmedia] NZB file downloaded"
 echo "[openmedia] Submitting NZB to SABnzbd (name: ${JOB_HASH:0:16}...)..."
 
 SUBMIT_RESPONSE=$(curl -sf \
-  "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=addlocalfile&name=${NZB_FILE}&nzbname=${JOB_HASH}&pp=3&output=json")
+  "http://127.0.0.1:8080/api?apikey=${SABNZBD_API_KEY}&mode=addlocalfile&name=${NZB_FILE}&nzbname=${JOB_HASH}&pp=3&output=json" || true)
 
 echo "[openmedia] SABnzbd response: ${SUBMIT_RESPONSE}"
 
-NZO_ID=$(echo "${SUBMIT_RESPONSE}" | grep -o '"SABnzbd_nzo_[^"]*"' | tr -d '"' | head -1)
+NZO_ID=$(echo "${SUBMIT_RESPONSE}" | jq -r '.nzo_ids[0] // empty' 2>/dev/null || true)
 if [ -z "${NZO_ID}" ]; then
   echo "[openmedia] ERROR: NZB submission failed"
   curl -sf -X PATCH "${API_BASE_URL}/downloads/jobs/${JOB_ID}/status" \

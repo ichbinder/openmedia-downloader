@@ -1,4 +1,5 @@
-FROM lscr.io/linuxserver/sabnzbd:latest
+# SABnzbd 5 answers with UUID nzo_ids and broke the monitor; upgrade only after a test run.
+FROM lscr.io/linuxserver/sabnzbd:4.5.5
 
 # ── Build 7-Zip with RAR codec from source ─────────────────────
 # Alpine's 7zip package ships without RAR support (license reasons).
