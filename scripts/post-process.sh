@@ -91,14 +91,8 @@ fi
 # ── Find video file ─────────────────────────────────────────────
 echo "[post-process] Searching for video file in ${FINAL_DIR}..."
 
-VIDEO_FILE=""
-for ext in mkv mp4 avi m4v wmv; do
-  FOUND=$(find "${FINAL_DIR}" -type f -iname "*.${ext}" -size +10M -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
-  if [ -n "${FOUND}" ]; then
-    VIDEO_FILE="${FOUND}"
-    break
-  fi
-done
+VIDEO_FILE=$(find "${FINAL_DIR}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" -o -iname "*.wmv" \) \
+  -size +10M -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
 
 if [ -z "${VIDEO_FILE}" ]; then
   echo "[post-process] No video file found (>10MB) — checking for inner NZB (wrapper NZB pattern)..."
