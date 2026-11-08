@@ -93,7 +93,7 @@ echo "[post-process] Searching for video file in ${FINAL_DIR}..."
 
 VIDEO_FILE=""
 for ext in mkv mp4 avi m4v wmv; do
-  FOUND=$(find "${FINAL_DIR}" -type f -iname "*.${ext}" -size +10M 2>/dev/null | sort -rn | head -1)
+  FOUND=$(find "${FINAL_DIR}" -type f -iname "*.${ext}" -size +10M -printf '%s %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
   if [ -n "${FOUND}" ]; then
     VIDEO_FILE="${FOUND}"
     break
