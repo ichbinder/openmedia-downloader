@@ -191,8 +191,15 @@ S3_STREAM_KEY="${HASH}/${HASH}_stream.mp4"
 
 REMUX_START=$(date +%s)
 
+# Apple players (AVPlayer, Safari) refuse HEVC in MP4 unless it is tagged hvc1; a copy from MKV yields hev1.
+VCODEC=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${VIDEO_FILE}" 2>/dev/null || true)
+TAG_ARGS=()
+if [ "${VCODEC}" = "hevc" ]; then
+  TAG_ARGS=(-tag:v hvc1)
+fi
+
 if ffmpeg -y -i "${VIDEO_FILE}" \
-    -c:v copy \
+    -c:v copy ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} \
     -c:a aac -ac 2 -b:a 256k \
     -threads "${THREADS}" \
     -map 0:v:0 \
