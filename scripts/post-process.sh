@@ -199,7 +199,7 @@ if [ "${VCODEC}" = "hevc" ]; then
 fi
 
 if ffmpeg -y -i "${VIDEO_FILE}" \
-    -c:v copy "${TAG_ARGS[@]}" \
+    -c:v copy ${TAG_ARGS[@]+"${TAG_ARGS[@]}"} \
     -c:a aac -ac 2 -b:a 256k \
     -threads "${THREADS}" \
     -map 0:v:0 \
